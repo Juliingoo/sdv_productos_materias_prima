@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<odoo>
+  <record id="view_picking_form_inherit_sdv_marble" model="ir.ui.view">
+    <field name="name">stock.picking.form.inherit.sdv.marble</field>
+    <field name="model">stock.picking</field>
+    <field name="inherit_id" ref="stock.view_picking_form"/>
+    <field name="arch" type="xml">
+      <xpath expr="//header" position="inside">
+        <button name="action_open_marble_receive_wizard"
+                type="object"
+                string="Registrar piezas"
+                class="oe_highlight"
+                invisible="state in ('cancel','done')"
+        />
+      </xpath>
+    </field>
+  </record>
+
+  <record id="view_picking_form_show_move_name" model="ir.ui.view">
+    <field name="name">stock.picking.form.show.move.name</field>
+    <field name="model">stock.picking</field>
+    <field name="inherit_id" ref="stock.view_picking_form"/>
+    <field name="arch" type="xml">
+
+      <!-- Modificamos la columna 'name' de la lista de move_ids_without_package -->
+      <xpath expr="//page[@name='operations']//field[@name='move_ids_without_package']//list/field[@name='name']"
+             position="attributes">
+        <!-- Hacemos visible la columna -->
+        <attribute name="column_invisible">False</attribute>
+        <!-- Opcionalmente, que sea ocultable desde el menú columnas -->
+        <attribute name="optional">show</attribute>
+        <!-- Etiqueta que verá el usuario -->
+        <attribute name="string">Nombre movimiento</attribute>
+      </xpath>
+
+    </field>
+  </record>
+</odoo>

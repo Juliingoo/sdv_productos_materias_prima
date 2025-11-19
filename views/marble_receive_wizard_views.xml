@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<odoo>
+  <record id="view_marble_receive_wizard_form" model="ir.ui.view">
+    <field name="name">sdv.marble.receive.wizard.form</field>
+    <field name="model">sdv.marble.receive.wizard</field>
+    <field name="arch" type="xml">
+      <form string="Registrar piezas recibidas">
+        <header>
+        </header>
+
+        <group>
+          <field name="picking_id" readonly="1"/>
+          <field name="move_id_custom"
+                 string="Producto origen"
+                    domain="[('picking_id', '=', picking_id)]"
+                 />
+
+<!--          <field name="move_product_id"/>-->
+
+          <field name="m2_total_calculated" readonly="1"/>
+          <button name="action_duplicate_last_line"
+                  type="object"
+                  string="Duplicar última línea"
+                  class="btn-secondary"/>
+        </group>
+
+        <field name="line_ids">
+          <list editable="bottom">
+            <field name="x_ancho_cm"/>
+            <field name="x_alto_cm"/>
+            <field name="x_grosor_cm"/>
+            <field name="m2" readonly="1"/>
+          </list>
+        </field>
+
+        <footer>
+          <button string="Crear piezas y lotes"
+                  name="action_generate_pieces"
+                  type="object"
+                  class="btn-primary"/>
+          <button string="Cancelar" class="btn-secondary" special="cancel"/>
+        </footer>
+      </form>
+    </field>
+  </record>
+</odoo>
