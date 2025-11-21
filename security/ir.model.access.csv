@@ -1,3 +1,3 @@
 id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
-access_marble_receive_wizard,access_marble_receive_wizard,model_sdv_marble_receive_wizard,,1,1,1,0
-access_marble_receive_line,access_marble_receive_line,model_sdv_marble_receive_line,,1,1,1,0
+access_marble_receive_wizard,access_marble_receive_wizard,model_sdv_marble_receive_wizard,,1,1,1,1
+access_marble_receive_line,access_marble_receive_line,model_sdv_marble_receive_line,,1,1,1,1

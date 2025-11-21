@@ -24,14 +24,19 @@
                   class="btn-secondary"/>
         </group>
 
-        <field name="line_ids">
-          <list editable="bottom">
+                <field name="line_ids">
+          <list editable="bottom" delete="true">
             <field name="x_ancho_cm"/>
             <field name="x_alto_cm"/>
             <field name="x_grosor_cm"/>
             <field name="m2" readonly="1"/>
+<!--            <button name="action_delete_line"-->
+<!--                    type="object"-->
+<!--                    icon="fa-trash"-->
+<!--                    string=""/>-->
           </list>
         </field>
+
 
         <footer>
           <button string="Crear piezas y lotes"

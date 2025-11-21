@@ -16,23 +16,23 @@
     </field>
   </record>
 
-  <record id="view_picking_form_show_move_name" model="ir.ui.view">
-    <field name="name">stock.picking.form.show.move.name</field>
-    <field name="model">stock.picking</field>
-    <field name="inherit_id" ref="stock.view_picking_form"/>
-    <field name="arch" type="xml">
+<!--  <record id="view_picking_form_show_move_name" model="ir.ui.view">-->
+<!--    <field name="name">stock.picking.form.show.move.name</field>-->
+<!--    <field name="model">stock.picking</field>-->
+<!--    <field name="inherit_id" ref="stock.view_picking_form"/>-->
+<!--    <field name="arch" type="xml">-->
 
-      <!-- Modificamos la columna 'name' de la lista de move_ids_without_package -->
-      <xpath expr="//page[@name='operations']//field[@name='move_ids_without_package']//list/field[@name='name']"
-             position="attributes">
-        <!-- Hacemos visible la columna -->
-        <attribute name="column_invisible">False</attribute>
-        <!-- Opcionalmente, que sea ocultable desde el menú columnas -->
-        <attribute name="optional">show</attribute>
-        <!-- Etiqueta que verá el usuario -->
-        <attribute name="string">Nombre movimiento</attribute>
-      </xpath>
+<!--      &lt;!&ndash; Modificamos la columna 'name' de la lista de move_ids_without_package &ndash;&gt;-->
+<!--      <xpath expr="//page[@name='operations']//field[@name='move_ids_without_package']//list/field[@name='name']"-->
+<!--             position="attributes">-->
+<!--        &lt;!&ndash; Hacemos visible la columna &ndash;&gt;-->
+<!--        <attribute name="column_invisible">False</attribute>-->
+<!--        &lt;!&ndash; Opcionalmente, que sea ocultable desde el menú columnas &ndash;&gt;-->
+<!--        <attribute name="optional">show</attribute>-->
+<!--        &lt;!&ndash; Etiqueta que verá el usuario &ndash;&gt;-->
+<!--        <attribute name="string">Nombre movimiento</attribute>-->
+<!--      </xpath>-->
 
-    </field>
-  </record>
+<!--    </field>-->
+<!--  </record>-->
 </odoo>

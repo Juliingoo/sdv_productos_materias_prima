@@ -25,7 +25,42 @@ class MarbleReceiveWizard(models.TransientModel):
         help="Elemento de la recepción sobre el que se registrarán las piezas.",
     )
 
+    # IDs de move lines disponibles para el dominio (solo productos base)
+    available_move_line_ids = fields.Many2many(
+        'stock.move.line',
+        compute='_compute_available_move_line_ids',
+        string="Líneas disponibles"
+    )
+
     # ----------------- Computes -----------------
+    @api.depends('picking_id', 'picking_id.move_line_ids', 'picking_id.move_line_ids.state')
+    def _compute_available_move_line_ids(self):
+        for wiz in self:
+            if not wiz.picking_id:
+                wiz.available_move_line_ids = False
+                continue
+
+            # Filtrar solo las move lines de productos "base" (sin medidas)
+            move_lines = wiz.picking_id.move_line_ids.filtered(
+                lambda ml: ml.state not in ('cancel', 'done') and wiz._is_base_product(ml.product_id)
+            )
+            wiz.available_move_line_ids = move_lines
+
+    def _is_base_product(self, product):
+        """
+        Determina si un producto es un producto "base" (padre) o uno generado con medidas.
+        Un producto base NO tiene medidas establecidas (x_ancho, x_alto, x_grosor son 0 o no existen).
+        """
+        if 'x_ancho' not in product._fields:
+            return True
+
+        ancho = product.x_ancho or 0.0
+        alto = product.x_alto or 0.0
+        grosor = product.x_grosor or 0.0
+
+        # Si todas las medidas son 0, es un producto base
+        return ancho <= 0 and alto <= 0 and grosor <= 0
+
     @api.depends('line_ids.x_ancho_cm', 'line_ids.x_alto_cm')
     def _compute_totals(self):
         for wiz in self:
@@ -52,6 +87,7 @@ class MarbleReceiveWizard(models.TransientModel):
                 return str(int(val))
             else:
                 return ('%g' % val).replace(',', '.')
+
         return f"{base_name} – {fmt(ancho_cm)}x{fmt(alto_cm)}x{fmt(grosor_cm)} cm"
 
     def _find_existing_child(self, base_product, ancho_cm, alto_cm, grosor_cm):
@@ -119,92 +155,136 @@ class MarbleReceiveWizard(models.TransientModel):
 
     def _create_child_product(self, base_product, ancho_cm, alto_cm, grosor_cm):
         """
-        Crea un nuevo product.template con el nombre maquetado con medidas.
-        El producto será rastreable por bienes (type='consu', is_storable=True)
-        y heredará precios de compra del producto base.
+        Crea un nuevo product.template con el nombre maquetado con medidas y los MISMOS
+        atributos que el producto base (en modo dinámico no se crean variantes automáticamente).
+        Luego crea explícitamente el product.product con la combinación específica de atributos.
         """
         ProductT = self.env['product.template']
+        ProductP = self.env['product.product']
         base_tmpl = base_product.product_tmpl_id
 
         ancho_cm = round(ancho_cm, 2)
         alto_cm = round(alto_cm, 2)
         grosor_cm = round(grosor_cm, 2)
 
-        # UoM = Unidad para contar piezas
+        # === UoM PARA MOVIMIENTOS: SIEMPRE UNIDADES ===
         uom_unit = self.env.ref('uom.product_uom_unit', raise_if_not_found=False)
+
         if not uom_unit:
             uom_unit = self.env['uom.uom'].search([('uom_type', '=', 'reference')], limit=1)
         if not uom_unit:
             raise UserError(_("No se encontró una unidad de medida de tipo 'Unidad'."))
 
-        # Maquetamos el nombre con las medidas
-        product_name = self._get_expected_product_name(base_tmpl.name, ancho_cm, alto_cm, grosor_cm)
+        print("Unidad de medida: " + str(uom_unit.name))
 
+        # === UoM COMERCIALES (solo información, no stock) ===
+        uom_sale_original = base_tmpl.uom_id
+        uom_purchase_original = base_tmpl.uom_po_id or uom_sale_original
+
+        print("Unidad de medida original: " + str(uom_sale_original.name))
+        print("Unidad de medida compra original: " + str(uom_purchase_original.name))
+
+
+        # Nombre del template con medidas
+        template_name_with_measures = self._get_expected_product_name(
+            base_tmpl.name, ancho_cm, alto_cm, grosor_cm
+        )
+
+        # === CREAR TEMPLATE HIJO (stock SIEMPRE en unidades) ===
         vals_tmpl = {
-            'name': product_name,  # "Tablero – 1x2x3 cm"
+            'name': template_name_with_measures,
             'type': 'consu',
             'is_storable': True,
             'categ_id': base_tmpl.categ_id.id,
-            'uom_id': uom_unit.id,
-            'uom_po_id': uom_unit.id,
+            'uom_id': uom_sale_original.id,
             'tracking': 'none',
             'company_id': base_tmpl.company_id.id,
             'purchase_ok': True,
             'sale_ok': base_tmpl.sale_ok,
         }
 
-        # Medidas + flag de componente
+        # Medidas
         for f, v in (('x_ancho', ancho_cm), ('x_alto', alto_cm), ('x_grosor', grosor_cm)):
             if f in base_tmpl._fields:
                 vals_tmpl[f] = v
+
         if 'x_b_es_componente' in base_tmpl._fields:
             vals_tmpl['x_b_es_componente'] = True
 
-        # Crear template sin disparar el constraint de medidas
+        # Atributos completos del template padre
+        if base_tmpl.attribute_line_ids:
+            attr_cmds = []
+            for attr_line in base_tmpl.attribute_line_ids:
+                attr_cmds.append((0, 0, {
+                    'attribute_id': attr_line.attribute_id.id,
+                    'value_ids': [(6, 0, attr_line.value_ids.ids)],
+                }))
+            vals_tmpl['attribute_line_ids'] = attr_cmds
+
+        # Crear el product.template hijo
         child_tmpl = ProductT.with_context(skip_measure_validation=True).create(vals_tmpl)
-        self._ensure_component_with_measures(child_tmpl, ancho_cm, alto_cm, grosor_cm)
 
-        # ==== HEREDAR ATRIBUTOS DEL PRODUCTO PADRE ====
-        ptavs = base_product.product_template_attribute_value_ids
-        if ptavs:
-            attr_cmds = [(5, 0, 0)]  # limpiar posibles líneas de atributo previas
-            for ptav in ptavs:
-                attr_cmds.append((
-                    0, 0, {
-                    'attribute_id': ptav.attribute_id.id,
-                    'value_ids': [(6, 0, [ptav.product_attribute_value_id.id])],
-                }
-                ))
-            child_tmpl.write({'attribute_line_ids': attr_cmds})
-            # Garantizamos que solo haya la combinación correspondiente
-            child_tmpl._create_variant_ids()
+        # Herencia de precios base
+        if 'standard_price' in child_tmpl._fields:
+            child_tmpl.standard_price = base_tmpl.standard_price
+        if 'list_price' in child_tmpl._fields:
+            child_tmpl.list_price = base_tmpl.list_price
 
-        # Variante única
-        child = child_tmpl.product_variant_id
-
-        # === HEREDAR PRECIOS DE COMPRA ===
-
-        # 1) Coste estándar (standard_price y precio de ventas lst_price)
-        if 'standard_price' in child._fields:
-            child.standard_price = base_product.standard_price
-
-        if 'lst_price' in child._fields:
-            child.lst_price = base_product.lst_price
-
-
-
-
-
-        # 2) Tarifas de proveedor (seller_ids)
-        #    Clonamos las líneas de proveedor del template base apuntando al nuevo template
+        # Tarifas de proveedor
         for seller in base_tmpl.seller_ids:
             seller.copy({'product_tmpl_id': child_tmpl.id})
 
-        # SKU opcional heredando el código base
-        if 'default_code' in child._fields and base_product.default_code:
-            child.default_code = base_product.default_code
+        # === CREAR LA VARIANTE (product.product) ===
+        ptavs = base_product.product_template_attribute_value_ids
+        if ptavs:
+            new_ptav_ids = []
+            for ptav in ptavs:
+                matching_line = child_tmpl.attribute_line_ids.filtered(
+                    lambda l: l.attribute_id.id == ptav.attribute_id.id
+                )
+                if matching_line:
+                    matching_ptav = matching_line.product_template_value_ids.filtered(
+                        lambda v: v.product_attribute_value_id.id == ptav.product_attribute_value_id.id
+                    )
+                    if matching_ptav:
+                        new_ptav_ids.append(matching_ptav[0].id)
 
-        return child
+            if not new_ptav_ids:
+                raise UserError(_(
+                    "No se pudieron mapear los atributos del producto '%s' al nuevo template."
+                ) % base_product.display_name)
+
+            child_product = ProductP.with_context(
+                skip_measure_validation=True,
+                create_product_product=True,
+            ).create({
+                'product_tmpl_id': child_tmpl.id,
+                'product_template_attribute_value_ids': [(6, 0, new_ptav_ids)],
+            })
+        else:
+            child_product = child_tmpl.product_variant_id
+
+        # Heredar precios del product.product padre
+        if 'standard_price' in child_product._fields:
+            child_product.standard_price = base_product.standard_price
+        if 'lst_price' in child_product._fields:
+            child_product.lst_price = base_product.lst_price
+
+        # Copiar SKU
+        if 'default_code' in child_product._fields and base_product.default_code:
+            child_product.default_code = base_product.default_code
+
+        # Marcar como componente con medidas
+        self._ensure_component_with_measures(child_tmpl, ancho_cm, alto_cm, grosor_cm)
+
+        # === GUARDAR INFO COMERCIAL DE UoM ORIGINAL (si existen campos) ===
+        if 'x_uom_sale' in child_tmpl._fields:
+            child_tmpl.x_uom_sale = uom_sale_original.id
+
+        if 'x_uom_purchase' in child_tmpl._fields:
+            child_tmpl.x_uom_purchase = uom_purchase_original.id
+
+        return child_product
 
     def action_generate_pieces(self):
         self.ensure_one()
@@ -217,8 +297,8 @@ class MarbleReceiveWizard(models.TransientModel):
             raise UserError(_("Debes seleccionar la línea de recepción sobre la que registrar las piezas."))
 
         # Trabajamos A PARTIR DE LA LÍNEA DE MOVIMIENTO SELECCIONADA
-        base_move_line = self.move_id_custom          # stock.move.line
-        base_move = base_move_line.move_id           # stock.move asociado
+        base_move_line = self.move_id_custom  # stock.move.line
+        base_move = base_move_line.move_id  # stock.move asociado
 
         if not base_move:
             raise UserError(_("La línea seleccionada no tiene un movimiento asociado."))
@@ -238,7 +318,6 @@ class MarbleReceiveWizard(models.TransientModel):
             lines_by_measures.setdefault(key, []).append(line)
 
         base_product = base_move_line.product_id
-        base_tmpl = base_product.product_tmpl_id
 
         # UoM Unidad
         uom_unit = self.env.ref('uom.product_uom_unit', raise_if_not_found=False)
@@ -246,6 +325,8 @@ class MarbleReceiveWizard(models.TransientModel):
             uom_unit = self.env['uom.uom'].search([('uom_type', '=', 'reference')], limit=1)
         if not uom_unit:
             raise UserError(_("No se encontró una unidad de medida de tipo 'Unidad'."))
+
+        total_pieces_created = len(self.line_ids)
 
         for (ancho, alto, grosor), lines_group in lines_by_measures.items():
             # 1) Buscar / crear producto hijo
@@ -255,7 +336,7 @@ class MarbleReceiveWizard(models.TransientModel):
 
             quantity = len(lines_group)
 
-            # 2) Reutilizar move existente del mismo picking + producto hijo, o crear uno nuevo
+            # 2) Buscar move existente del mismo picking + producto hijo
             existing_move = StockMove.search([
                 ('picking_id', '=', picking.id),
                 ('product_id', '=', child.id),
@@ -264,9 +345,11 @@ class MarbleReceiveWizard(models.TransientModel):
 
             if existing_move:
                 child_move = existing_move
-                child_move.product_uom_qty += quantity
-                start_seq = len(child_move.move_line_ids)
+                # Incrementar la demanda
+                new_demand = child_move.product_uom_qty + quantity
+                child_move.write({'product_uom_qty': new_demand})
             else:
+                # Crear nuevo move SIN confirmar todavía
                 child_move = StockMove.create({
                     'name': child.display_name,
                     'product_id': child.id,
@@ -274,33 +357,49 @@ class MarbleReceiveWizard(models.TransientModel):
                     'product_uom': uom_unit.id,
                     'picking_id': picking.id,
                     'company_id': picking.company_id.id,
-                    'location_id': base_move_line.location_id.id,
-                    'location_dest_id': base_move_line.location_dest_id.id,
+                    'location_id': base_move.location_id.id,
+                    'location_dest_id': base_move.location_dest_id.id,
                     'state': 'draft',
                     'purchase_line_id': base_move.purchase_line_id.id
-                        if 'purchase_line_id' in base_move._fields else False,
+                    if 'purchase_line_id' in base_move._fields else False,
                     'origin': base_move.origin or picking.name,
                 })
-                child_move._action_confirm()
-                start_seq = 0
 
-            # 3) Crear las move lines (1 por pieza)
-            for seq, line in enumerate(lines_group, start=start_seq + 1):
+            # 3) ELIMINAR cualquier move line automática que Odoo haya creado
+            if child_move.move_line_ids:
+                child_move.move_line_ids.unlink()
+
+            # 4) Crear las move lines manualmente (1 por pieza)
+            for line in lines_group:
                 StockMoveLine.create({
-                    'move_id': child_move.id,              # <-- IMPORTANTE: campo correcto
+                    'move_id': child_move.id,
                     'picking_id': picking.id,
                     'product_id': child.id,
                     'product_uom_id': uom_unit.id,
                     'location_id': child_move.location_id.id,
                     'location_dest_id': child_move.location_dest_id.id,
-                    'qty_done': 1.0,
+                    'quantity': 1.0,
                 })
 
-            child_move._action_assign()
+            # 5) Confirmar el move si está en draft
+            if child_move.state == 'draft':
+                child_move._action_confirm()
 
-        # Cancelar el movimiento base original (sustituido por los hijos)
-        if base_move.state not in ('cancel', 'done'):
-            base_move._action_cancel()
+        # REDUCIR la demanda del movimiento base en lugar de cancelarlo directamente
+        new_base_qty = base_move.product_uom_qty - total_pieces_created
+
+        if new_base_qty <= 0:
+            # Si ya no queda demanda, cancelar el move base
+            if base_move.state not in ('cancel', 'done'):
+                base_move._action_cancel()
+        else:
+            # Reducir la demanda del move base
+            base_move.write({'product_uom_qty': new_base_qty})
+            # También eliminar las move lines sobrantes del base
+            if base_move.move_line_ids:
+                lines_to_remove = base_move.move_line_ids[total_pieces_created:]
+                if lines_to_remove:
+                    lines_to_remove.unlink()
 
         return {'type': 'ir.actions.act_window_close'}
 
